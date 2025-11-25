@@ -68,21 +68,39 @@ var (
 var colWidths = []int{12, 15, 25, 12, 10, 5, 5, 5, 5, 5, 13, 13, 20}
 var baseColHeaders = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MIN", "HRS", "DAY", "MON", "DOW", "LAST", "NEXT", "MESSAGE"}
 
+// SortMode represents the current sort mode
+type SortMode int
+
+const (
+	SortByStatus SortMode = iota
+	SortByNextRun
+)
+
+func (s SortMode) String() string {
+	switch s {
+	case SortByNextRun:
+		return "next"
+	default:
+		return "status"
+	}
+}
+
 // KeyMap defines the keybindings
 type KeyMap struct {
-	Up        key.Binding
-	Down      key.Binding
-	Tab       key.Binding
-	ShiftTab  key.Binding
-	Refresh   key.Binding
-	Quit      key.Binding
-	Help      key.Binding
-	Enter     key.Binding
-	All       key.Binding
-	Jobs      key.Binding
-	Flows     key.Binding
-	Events    key.Binding
-	ToggleJST key.Binding
+	Up         key.Binding
+	Down       key.Binding
+	Tab        key.Binding
+	ShiftTab   key.Binding
+	Refresh    key.Binding
+	Quit       key.Binding
+	Help       key.Binding
+	Enter      key.Binding
+	All        key.Binding
+	Jobs       key.Binding
+	Flows      key.Binding
+	Events     key.Binding
+	ToggleJST  key.Binding
+	ToggleSort key.Binding
 }
 
 var keys = KeyMap{
@@ -138,6 +156,10 @@ var keys = KeyMap{
 		key.WithKeys("J"),
 		key.WithHelp("J", "toggle JST/UTC"),
 	),
+	ToggleSort: key.NewBinding(
+		key.WithKeys("s"),
+		key.WithHelp("s", "sort by next run"),
+	),
 }
 
 func (k KeyMap) ShortHelp() []key.Binding {
@@ -159,6 +181,7 @@ type Model struct {
 	filteredCache    []types.AsyncResource
 	cursor           int
 	viewMode         types.ViewMode
+	sortMode         SortMode
 	help             help.Model
 	keys             KeyMap
 	showHelp         bool
@@ -284,6 +307,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.ToggleJST):
 			m.useJST = !m.useJST
 			return m, nil
+
+		case key.Matches(msg, m.keys.ToggleSort):
+			if m.sortMode == SortByStatus {
+				m.sortMode = SortByNextRun
+			} else {
+				m.sortMode = SortByStatus
+			}
+			m.updateFiltered()
+			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
@@ -310,15 +342,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) updateFiltered() {
 	filtered := m.filterResources()
 
-	// Sort by status priority then name
-	sort.Slice(filtered, func(i, j int) bool {
-		pi := statusPriority(filtered[i].Status)
-		pj := statusPriority(filtered[j].Status)
-		if pi != pj {
-			return pi < pj
-		}
-		return filtered[i].Name < filtered[j].Name
-	})
+	// Sort based on sort mode
+	switch m.sortMode {
+	case SortByNextRun:
+		// Sort by next run time (earliest first), items without schedule go to bottom
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		now := time.Now().UTC()
+		sort.Slice(filtered, func(i, j int) bool {
+			nextI := m.getNextRunTimeValue(filtered[i].Schedule, parser, now)
+			nextJ := m.getNextRunTimeValue(filtered[j].Schedule, parser, now)
+			// Items without schedule go to bottom
+			if nextI.IsZero() && nextJ.IsZero() {
+				return filtered[i].Name < filtered[j].Name
+			}
+			if nextI.IsZero() {
+				return false
+			}
+			if nextJ.IsZero() {
+				return true
+			}
+			return nextI.Before(nextJ)
+		})
+	default:
+		// Sort by status priority then name
+		sort.Slice(filtered, func(i, j int) bool {
+			pi := statusPriority(filtered[i].Status)
+			pj := statusPriority(filtered[j].Status)
+			if pi != pj {
+				return pi < pj
+			}
+			return filtered[i].Name < filtered[j].Name
+		})
+	}
 
 	m.filteredCache = filtered
 
@@ -329,6 +384,18 @@ func (m *Model) updateFiltered() {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
+}
+
+// getNextRunTimeValue returns the next run time as time.Time for sorting
+func (m *Model) getNextRunTimeValue(schedule string, parser cron.Parser, now time.Time) time.Time {
+	if schedule == "" {
+		return time.Time{}
+	}
+	sched, err := parser.Parse(schedule)
+	if err != nil {
+		return time.Time{}
+	}
+	return sched.Next(now)
 }
 
 func (m Model) filterResources() []types.AsyncResource {
@@ -440,7 +507,9 @@ func (m Model) renderInfoLine() string {
 		tz = "JST"
 	}
 
-	return fmt.Sprintf("%s %s  %s %s  %s %s  %s %s  %s %s  %s %s",
+	sortStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("171")).Bold(true)
+
+	return fmt.Sprintf("%s %s  %s %s  %s %s  %s %s  %s %s  %s %s  %s %s",
 		labelStyle.Render("ctx:"),
 		ctxStyle.Render(ctx),
 		labelStyle.Render("cluster:"),
@@ -451,6 +520,8 @@ func (m Model) renderInfoLine() string {
 		countStyle.Render(fmt.Sprintf("%d", len(m.filteredCache))),
 		labelStyle.Render("tz:"),
 		tzStyle.Render(tz),
+		labelStyle.Render("sort:"),
+		sortStyle.Render(m.sortMode.String()),
 		labelStyle.Render("updated:"),
 		timeStyle.Render(m.lastUpdate.Format("15:04:05")),
 	)
