@@ -38,7 +38,7 @@ func RenderDetail(r types.AsyncResource, width, height int) string {
 
 	// Basic info
 	b.WriteString(renderField("Namespace", r.Namespace))
-	b.WriteString(renderField("Status", formatStatusText(r.Status)))
+	b.WriteString(renderField("Status", formatDetailStatus(r.Status)))
 
 	// Timing
 	if r.StartTime != nil {
@@ -102,18 +102,19 @@ func renderField(label, value string) string {
 	return labelStyle.Render(label+":") + " " + valueStyle.Render(value) + "\n"
 }
 
-func formatStatusText(s types.ResourceStatus) string {
+func formatDetailStatus(s types.ResourceStatus) string {
+	base := lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Padding(0, 1)
 	switch s {
 	case types.StatusRunning:
-		return runningStyle.Render("● " + string(s))
+		return base.Background(lipgloss.Color("24")).Render("● Running")
 	case types.StatusSucceeded:
-		return succeededStyle.Render("✓ " + string(s))
+		return base.Background(lipgloss.Color("22")).Render("✓ Succeeded")
 	case types.StatusFailed:
-		return failedStyle.Render("✗ " + string(s))
+		return base.Background(lipgloss.Color("52")).Render("✗ Failed")
 	case types.StatusPending:
-		return pendingStyle.Render("○ " + string(s))
+		return base.Background(lipgloss.Color("58")).Render("○ Pending")
 	default:
-		return unknownStyle.Render("? " + string(s))
+		return base.Background(lipgloss.Color("236")).Render("? Unknown")
 	}
 }
 
