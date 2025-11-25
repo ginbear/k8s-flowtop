@@ -22,6 +22,8 @@ type Client struct {
 	clientset     *kubernetes.Clientset
 	dynamicClient dynamic.Interface
 	namespace     string
+	context       string
+	cluster       string
 }
 
 // NewClient creates a new kubernetes client
@@ -30,6 +32,22 @@ func NewClient(namespace string) (*Client, error) {
 	if kubeconfig == "" {
 		home, _ := os.UserHomeDir()
 		kubeconfig = filepath.Join(home, ".kube", "config")
+	}
+
+	// Load kubeconfig to get context and cluster info
+	loadingRules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}
+	configOverrides := &clientcmd.ConfigOverrides{}
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+
+	rawConfig, err := kubeConfig.RawConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load kubeconfig: %w", err)
+	}
+
+	currentContext := rawConfig.CurrentContext
+	var clusterName string
+	if ctx, ok := rawConfig.Contexts[currentContext]; ok {
+		clusterName = ctx.Cluster
 	}
 
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
@@ -51,12 +69,24 @@ func NewClient(namespace string) (*Client, error) {
 		clientset:     clientset,
 		dynamicClient: dynamicClient,
 		namespace:     namespace,
+		context:       currentContext,
+		cluster:       clusterName,
 	}, nil
 }
 
 // GetNamespace returns the current namespace
 func (c *Client) GetNamespace() string {
 	return c.namespace
+}
+
+// GetContext returns the current context name
+func (c *Client) GetContext() string {
+	return c.context
+}
+
+// GetCluster returns the current cluster name
+func (c *Client) GetCluster() string {
+	return c.cluster
 }
 
 // SetNamespace sets the namespace to watch

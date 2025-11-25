@@ -58,6 +58,9 @@ var (
 				Foreground(lipgloss.Color("250")).
 				Background(lipgloss.Color("236")).
 				Padding(0, 2)
+
+	separatorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240"))
 )
 
 // Column widths
@@ -366,23 +369,21 @@ func (m Model) View() string {
 	// Title
 	title := titleStyle.Render("🔄 k8s-flowtop - Async Processing Monitor")
 
+	// Context, Cluster, Namespace, and status info
+	infoLine := m.renderInfoLine()
+
+	// Separator line
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	separator := separatorStyle.Render(strings.Repeat("─", width))
+
 	// Tabs
 	tabs := m.renderTabs()
 
 	// Table
 	tableView := m.renderTable()
-
-	// Status bar
-	ns := m.k8sClient.GetNamespace()
-	if ns == "" {
-		ns = "all namespaces"
-	}
-	statusBar := statusBarStyle.Render(fmt.Sprintf(
-		"Namespace: %s | Resources: %d | Updated: %s",
-		ns,
-		len(m.filteredCache),
-		m.lastUpdate.Format("15:04:05"),
-	))
 
 	// Help
 	var helpView string
@@ -395,10 +396,40 @@ func (m Model) View() string {
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		title,
+		infoLine,
+		separator,
 		tabs,
 		tableView,
-		statusBar,
 		helpView,
+	)
+}
+
+func (m Model) renderInfoLine() string {
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	ctxStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	clusterStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+	nsStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("159")).Bold(true)
+	countStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("156"))
+	timeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+
+	ctx := m.k8sClient.GetContext()
+	cluster := m.k8sClient.GetCluster()
+	ns := m.k8sClient.GetNamespace()
+	if ns == "" {
+		ns = "all"
+	}
+
+	return fmt.Sprintf("%s %s  %s %s  %s %s  %s %s  %s %s",
+		labelStyle.Render("ctx:"),
+		ctxStyle.Render(ctx),
+		labelStyle.Render("cluster:"),
+		clusterStyle.Render(cluster),
+		labelStyle.Render("ns:"),
+		nsStyle.Render(ns),
+		labelStyle.Render("resources:"),
+		countStyle.Render(fmt.Sprintf("%d", len(m.filteredCache))),
+		labelStyle.Render("updated:"),
+		timeStyle.Render(m.lastUpdate.Format("15:04:05")),
 	)
 }
 
