@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ginbear/k8s-flowtop/internal/k8s"
 	"github.com/ginbear/k8s-flowtop/internal/types"
+	"github.com/robfig/cron/v3"
 )
 
 // Styles
@@ -64,8 +65,8 @@ var (
 )
 
 // Column widths
-var colWidths = []int{12, 15, 30, 12, 10, 15, 25}
-var colHeaders = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "SCHEDULE", "MESSAGE"}
+var colWidths = []int{12, 15, 25, 12, 10, 5, 5, 5, 5, 5, 18, 20}
+var colHeaders = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MIN", "HRS", "DAY", "MON", "DOW", "NEXT RUN", "MESSAGE"}
 
 // KeyMap defines the keybindings
 type KeyMap struct {
@@ -495,14 +496,15 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool) string {
 		duration = formatDuration(r.Duration)
 	}
 
-	schedule := r.Schedule
-	if schedule == "" {
-		schedule = "-"
-	}
+	// Parse cron schedule into 5 fields (min, hrs, day, mon, dow)
+	cronFields := parseCronFields(r.Schedule)
+
+	// Calculate next run time
+	nextRun := getNextRunTime(r.Schedule)
 
 	msg := r.Message
-	if len(msg) > colWidths[6]-2 {
-		msg = msg[:colWidths[6]-5] + "..."
+	if len(msg) > colWidths[11]-2 {
+		msg = msg[:colWidths[11]-5] + "..."
 	}
 	if msg == "" {
 		msg = "-"
@@ -514,8 +516,13 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool) string {
 		padRight(truncate(r.Name, colWidths[2]-2), colWidths[2]),
 		padRight(formatStatusText(r.Status), colWidths[3]),
 		padRight(duration, colWidths[4]),
-		padRight(truncate(schedule, colWidths[5]-2), colWidths[5]),
-		padRight(msg, colWidths[6]),
+		padCenter(cronFields[0], colWidths[5]),  // MIN
+		padCenter(cronFields[1], colWidths[6]),  // HRS
+		padCenter(cronFields[2], colWidths[7]),  // DAY
+		padCenter(cronFields[3], colWidths[8]),  // MON
+		padCenter(cronFields[4], colWidths[9]),  // DOW
+		padRight(nextRun, colWidths[10]),        // NEXT RUN
+		padRight(msg, colWidths[11]),
 	}
 
 	var result strings.Builder
@@ -531,6 +538,48 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool) string {
 	}
 
 	return result.String()
+}
+
+// parseCronFields splits a cron expression into 5 fields
+func parseCronFields(schedule string) []string {
+	empty := []string{"-", "-", "-", "-", "-"}
+	if schedule == "" {
+		return empty
+	}
+
+	fields := strings.Fields(schedule)
+	if len(fields) < 5 {
+		return empty
+	}
+
+	// Return first 5 fields (min, hrs, day, mon, dow)
+	return fields[:5]
+}
+
+// getNextRunTime calculates the next run time from a cron expression
+func getNextRunTime(schedule string) string {
+	if schedule == "" {
+		return "-"
+	}
+
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	sched, err := parser.Parse(schedule)
+	if err != nil {
+		return "-"
+	}
+
+	next := sched.Next(time.Now())
+	return next.Format("01/02 15:04")
+}
+
+// padCenter pads a string to center it within the given width
+func padCenter(s string, width int) string {
+	if len(s) >= width {
+		return s[:width]
+	}
+	leftPad := (width - len(s)) / 2
+	rightPad := width - len(s) - leftPad
+	return strings.Repeat(" ", leftPad) + s + strings.Repeat(" ", rightPad)
 }
 
 func padRight(s string, width int) string {
