@@ -136,17 +136,20 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 
 // Model is the main TUI model
 type Model struct {
-	k8sClient  *k8s.Client
-	resources  []types.AsyncResource
-	table      table.Model
-	viewMode   types.ViewMode
-	help       help.Model
-	keys       KeyMap
-	showHelp   bool
-	err        error
-	width      int
-	height     int
-	lastUpdate time.Time
+	k8sClient        *k8s.Client
+	resources        []types.AsyncResource
+	filteredCache    []types.AsyncResource
+	table            table.Model
+	viewMode         types.ViewMode
+	help             help.Model
+	keys             KeyMap
+	showHelp         bool
+	showDetail       bool
+	selectedResource *types.AsyncResource
+	err              error
+	width            int
+	height           int
+	lastUpdate       time.Time
 }
 
 // Messages
@@ -199,6 +202,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Handle detail view escape
+		if m.showDetail {
+			switch msg.String() {
+			case "esc", "enter", "q":
+				m.showDetail = false
+				m.selectedResource = nil
+				return m, nil
+			}
+			return m, nil
+		}
+
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
@@ -209,6 +223,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key.Matches(msg, m.keys.Refresh):
 			return m, m.fetchResources()
+
+		case key.Matches(msg, m.keys.Enter):
+			// Show detail view
+			idx := m.table.Cursor()
+			if idx >= 0 && idx < len(m.filteredCache) {
+				r := m.filteredCache[idx]
+				m.selectedResource = &r
+				m.showDetail = true
+			}
+			return m, nil
 
 		case key.Matches(msg, m.keys.Tab):
 			m.viewMode = (m.viewMode + 1) % 4
@@ -286,6 +310,9 @@ func (m *Model) updateTable() {
 		}
 		return filtered[i].Name < filtered[j].Name
 	})
+
+	// Cache filtered results for detail view lookup
+	m.filteredCache = filtered
 
 	for _, r := range filtered {
 		rows = append(rows, resourceToRow(r))
@@ -392,6 +419,11 @@ func formatDuration(d time.Duration) string {
 func (m Model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("Error: %v\n\nPress q to quit.", m.err)
+	}
+
+	// Show detail view if active
+	if m.showDetail && m.selectedResource != nil {
+		return RenderDetail(*m.selectedResource, m.width, m.height)
 	}
 
 	// Title
