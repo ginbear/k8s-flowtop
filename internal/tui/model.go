@@ -65,23 +65,24 @@ var (
 )
 
 // Column widths
-var colWidths = []int{12, 15, 25, 12, 10, 5, 5, 5, 5, 5, 18, 20}
-var colHeaders = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MIN", "HRS", "DAY", "MON", "DOW", "NEXT RUN", "MESSAGE"}
+var colWidths = []int{12, 15, 25, 12, 10, 5, 5, 5, 5, 5, 13, 13, 20}
+var baseColHeaders = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MIN", "HRS", "DAY", "MON", "DOW", "LAST", "NEXT", "MESSAGE"}
 
 // KeyMap defines the keybindings
 type KeyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Tab      key.Binding
-	ShiftTab key.Binding
-	Refresh  key.Binding
-	Quit     key.Binding
-	Help     key.Binding
-	Enter    key.Binding
-	All      key.Binding
-	Jobs     key.Binding
-	Flows    key.Binding
-	Events   key.Binding
+	Up        key.Binding
+	Down      key.Binding
+	Tab       key.Binding
+	ShiftTab  key.Binding
+	Refresh   key.Binding
+	Quit      key.Binding
+	Help      key.Binding
+	Enter     key.Binding
+	All       key.Binding
+	Jobs      key.Binding
+	Flows     key.Binding
+	Events    key.Binding
+	ToggleJST key.Binding
 }
 
 var keys = KeyMap{
@@ -133,6 +134,10 @@ var keys = KeyMap{
 		key.WithKeys("4"),
 		key.WithHelp("4", "events"),
 	),
+	ToggleJST: key.NewBinding(
+		key.WithKeys("J"),
+		key.WithHelp("J", "toggle JST/UTC"),
+	),
 }
 
 func (k KeyMap) ShortHelp() []key.Binding {
@@ -163,6 +168,8 @@ type Model struct {
 	width            int
 	height           int
 	lastUpdate       time.Time
+	useJST           bool
+	jstLocation      *time.Location
 }
 
 // Messages
@@ -172,13 +179,16 @@ type errMsg struct{ error }
 
 // NewModel creates a new TUI model
 func NewModel(client *k8s.Client) Model {
+	jst, _ := time.LoadLocation("Asia/Tokyo")
 	return Model{
-		k8sClient: client,
-		viewMode:  types.ViewAll,
-		help:      help.New(),
-		keys:      keys,
-		showHelp:  false,
-		cursor:    0,
+		k8sClient:   client,
+		viewMode:    types.ViewAll,
+		help:        help.New(),
+		keys:        keys,
+		showHelp:    false,
+		cursor:      0,
+		useJST:      false,
+		jstLocation: jst,
 	}
 }
 
@@ -269,6 +279,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Events):
 			m.viewMode = types.ViewEvents
 			m.updateFiltered()
+			return m, nil
+
+		case key.Matches(msg, m.keys.ToggleJST):
+			m.useJST = !m.useJST
 			return m, nil
 		}
 
@@ -412,6 +426,7 @@ func (m Model) renderInfoLine() string {
 	nsStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("159")).Bold(true)
 	countStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("156"))
 	timeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	tzStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 
 	ctx := m.k8sClient.GetContext()
 	cluster := m.k8sClient.GetCluster()
@@ -420,7 +435,12 @@ func (m Model) renderInfoLine() string {
 		ns = "all"
 	}
 
-	return fmt.Sprintf("%s %s  %s %s  %s %s  %s %s  %s %s",
+	tz := "UTC"
+	if m.useJST {
+		tz = "JST"
+	}
+
+	return fmt.Sprintf("%s %s  %s %s  %s %s  %s %s  %s %s  %s %s",
 		labelStyle.Render("ctx:"),
 		ctxStyle.Render(ctx),
 		labelStyle.Render("cluster:"),
@@ -429,6 +449,8 @@ func (m Model) renderInfoLine() string {
 		nsStyle.Render(ns),
 		labelStyle.Render("resources:"),
 		countStyle.Render(fmt.Sprintf("%d", len(m.filteredCache))),
+		labelStyle.Render("tz:"),
+		tzStyle.Render(tz),
 		labelStyle.Render("updated:"),
 		timeStyle.Render(m.lastUpdate.Format("15:04:05")),
 	)
@@ -477,9 +499,21 @@ func (m Model) renderTable() string {
 }
 
 func (m Model) renderHeader() string {
+	tz := "UTC"
+	if m.useJST {
+		tz = "JST"
+	}
+
 	var result strings.Builder
-	for i, h := range colHeaders {
-		result.WriteString(headerStyle.Render(padRight(h, colWidths[i])))
+	for i, h := range baseColHeaders {
+		header := h
+		// Add timezone to LAST and NEXT columns
+		if i == 10 {
+			header = fmt.Sprintf("LAST(%s)", tz)
+		} else if i == 11 {
+			header = fmt.Sprintf("NEXT(%s)", tz)
+		}
+		result.WriteString(headerStyle.Render(padRight(header, colWidths[i])))
 	}
 	return result.String()
 }
@@ -499,12 +533,13 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool) string {
 	// Parse cron schedule into 5 fields (min, hrs, day, mon, dow)
 	cronFields := parseCronFields(r.Schedule)
 
-	// Calculate next run time
-	nextRun := getNextRunTime(r.Schedule)
+	// Calculate last and next run time
+	lastRun := m.formatTime(r.LastRun)
+	nextRun := m.getNextRunTime(r.Schedule)
 
 	msg := r.Message
-	if len(msg) > colWidths[11]-2 {
-		msg = msg[:colWidths[11]-5] + "..."
+	if len(msg) > colWidths[12]-2 {
+		msg = msg[:colWidths[12]-5] + "..."
 	}
 	if msg == "" {
 		msg = "-"
@@ -521,8 +556,9 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool) string {
 		padCenter(cronFields[2], colWidths[7]),  // DAY
 		padCenter(cronFields[3], colWidths[8]),  // MON
 		padCenter(cronFields[4], colWidths[9]),  // DOW
-		padRight(nextRun, colWidths[10]),        // NEXT RUN
-		padRight(msg, colWidths[11]),
+		padRight(lastRun, colWidths[10]),        // LAST
+		padRight(nextRun, colWidths[11]),        // NEXT
+		padRight(msg, colWidths[12]),
 	}
 
 	var result strings.Builder
@@ -556,8 +592,23 @@ func parseCronFields(schedule string) []string {
 	return fields[:5]
 }
 
+// formatTime formats a time pointer with timezone consideration
+func (m Model) formatTime(t *time.Time) string {
+	if t == nil {
+		return "-"
+	}
+	tt := *t
+	if m.useJST && m.jstLocation != nil {
+		tt = tt.In(m.jstLocation)
+	} else {
+		tt = tt.UTC()
+	}
+	return tt.Format("01/02 15:04")
+}
+
 // getNextRunTime calculates the next run time from a cron expression
-func getNextRunTime(schedule string) string {
+// Kubernetes CronJob uses UTC, so we calculate based on UTC time
+func (m Model) getNextRunTime(schedule string) string {
 	if schedule == "" {
 		return "-"
 	}
@@ -568,7 +619,11 @@ func getNextRunTime(schedule string) string {
 		return "-"
 	}
 
-	next := sched.Next(time.Now())
+	// Calculate next run based on UTC (Kubernetes CronJob default)
+	next := sched.Next(time.Now().UTC())
+	if m.useJST && m.jstLocation != nil {
+		next = next.In(m.jstLocation)
+	}
 	return next.Format("01/02 15:04")
 }
 
