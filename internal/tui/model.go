@@ -163,8 +163,8 @@ func NewModel(client *k8s.Client) Model {
 		{Title: "KIND", Width: 12},
 		{Title: "NAMESPACE", Width: 15},
 		{Title: "NAME", Width: 30},
-		{Title: "STATUS", Width: 12},
-		{Title: "DURATION", Width: 12},
+		{Title: "STATUS", Width: 10},
+		{Title: "DURATION", Width: 10},
 		{Title: "SCHEDULE", Width: 15},
 		{Title: "MESSAGE", Width: 30},
 	}
@@ -178,6 +178,7 @@ func NewModel(client *k8s.Client) Model {
 	s := table.DefaultStyles()
 	s.Header = headerStyle
 	s.Selected = selectedStyle
+	s.Cell = lipgloss.NewStyle().Padding(0, 1)
 	t.SetStyles(s)
 
 	return Model{
@@ -392,17 +393,18 @@ func resourceToRow(r types.AsyncResource) table.Row {
 }
 
 func formatStatus(s types.ResourceStatus) string {
+	// Use plain text with icons - lipgloss styling conflicts with table rendering
 	switch s {
 	case types.StatusRunning:
-		return runningStyle.Render(string(s))
+		return "● Running"
 	case types.StatusSucceeded:
-		return succeededStyle.Render(string(s))
+		return "✓ Succeeded"
 	case types.StatusFailed:
-		return failedStyle.Render(string(s))
+		return "✗ Failed"
 	case types.StatusPending:
-		return pendingStyle.Render(string(s))
+		return "○ Pending"
 	default:
-		return unknownStyle.Render(string(s))
+		return "? Unknown"
 	}
 }
 
