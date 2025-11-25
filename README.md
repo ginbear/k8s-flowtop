@@ -9,9 +9,9 @@ Kubernetes 上で流れる非同期処理（Workflows, Jobs, Events, Pipelines�
 - **Job / CronJob** の監視
 - **Argo Workflows** (Workflow, CronWorkflow) の監視
 - **Argo Events** (Sensor, EventSource) の監視
-- ステータスによるソート（Running > Failed > Pending > Succeeded）
+- ソート切替（ステータス順 / 次回実行順）
+- JST/UTC 切替
 - 5秒ごとの自動更新
-- 詳細ビュー（Enter キー）
 
 ## Installation
 
@@ -45,22 +45,13 @@ flowtop -v
 | `↑/k` | Move up |
 | `↓/j` | Move down |
 | `Tab` | Next view |
-| `Shift+Tab` | Previous view |
-| `1` | All resources |
-| `2` | Jobs only |
-| `3` | Workflows only |
-| `4` | Events only |
+| `1-4` | Switch view (All/Jobs/Workflows/Events) |
 | `Enter` | Show details |
+| `s` | Sort by next run / status |
+| `J` | Toggle JST/UTC |
 | `r` | Refresh |
 | `?` | Toggle help |
 | `q` | Quit |
-
-## Views
-
-- **All**: すべての非同期リソース
-- **Jobs**: Job / CronJob
-- **Workflows**: Argo Workflow / CronWorkflow
-- **Events**: Argo Events Sensor / EventSource
 
 ## Requirements
 
