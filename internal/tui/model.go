@@ -42,7 +42,8 @@ var (
 	selectedRowStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("229")).
 				Background(lipgloss.Color("57")).
-				Bold(true)
+				Bold(true).
+				Padding(0, 1)
 
 	cellStyle = lipgloss.NewStyle().
 			Padding(0, 1)
@@ -404,12 +405,14 @@ func (m Model) View() string {
 func (m Model) renderTable() string {
 	var b strings.Builder
 
-	// Header
-	var headerCells []string
-	for i, h := range colHeaders {
-		headerCells = append(headerCells, headerStyle.Width(colWidths[i]).Render(h))
+	width := m.width
+	if width <= 0 {
+		width = 120
 	}
-	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, headerCells...))
+
+	// Header - clip to screen width
+	header := m.renderHeader()
+	b.WriteString(clipToWidth(header, width))
 	b.WriteString("\n")
 
 	// Calculate visible rows
@@ -434,11 +437,25 @@ func (m Model) renderTable() string {
 		isSelected := i == m.cursor
 
 		row := m.renderRow(r, isSelected)
-		b.WriteString(row)
+		b.WriteString(clipToWidth(row, width))
 		b.WriteString("\n")
 	}
 
 	return b.String()
+}
+
+func (m Model) renderHeader() string {
+	var result strings.Builder
+	for i, h := range colHeaders {
+		result.WriteString(headerStyle.Render(padRight(h, colWidths[i])))
+	}
+	return result.String()
+}
+
+// clipToWidth clips a string to the given width, accounting for ANSI codes
+func clipToWidth(s string, width int) string {
+	// Use lipgloss to handle ANSI-aware width
+	return lipgloss.NewStyle().MaxWidth(width).Render(s)
 }
 
 func (m Model) renderRow(r types.AsyncResource, isSelected bool) string {
@@ -453,42 +470,47 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool) string {
 	}
 
 	msg := r.Message
-	if len(msg) > 25 {
-		msg = msg[:22] + "..."
+	if len(msg) > colWidths[6]-2 {
+		msg = msg[:colWidths[6]-5] + "..."
 	}
 	if msg == "" {
 		msg = "-"
 	}
 
 	cells := []string{
-		string(r.Kind),
-		r.Namespace,
-		truncate(r.Name, colWidths[2]-2),
-		formatStatusText(r.Status),
-		duration,
-		schedule,
-		msg,
+		padRight(string(r.Kind), colWidths[0]),
+		padRight(truncate(r.Namespace, colWidths[1]-2), colWidths[1]),
+		padRight(truncate(r.Name, colWidths[2]-2), colWidths[2]),
+		padRight(formatStatusText(r.Status), colWidths[3]),
+		padRight(duration, colWidths[4]),
+		padRight(truncate(schedule, colWidths[5]-2), colWidths[5]),
+		padRight(msg, colWidths[6]),
 	}
 
-	var renderedCells []string
+	var result strings.Builder
 	for i, cell := range cells {
-		style := cellStyle.Width(colWidths[i])
-
 		if isSelected {
-			style = selectedRowStyle.Width(colWidths[i]).Padding(0, 1)
+			result.WriteString(selectedRowStyle.Render(cell))
 		} else if i == 3 {
 			// Status column - apply background color
-			style = getStatusStyle(r.Status).Width(colWidths[i]).Padding(0, 1)
+			result.WriteString(getStatusStyle(r.Status).Render(cell))
+		} else {
+			result.WriteString(cellStyle.Render(cell))
 		}
-
-		renderedCells = append(renderedCells, style.Render(cell))
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, renderedCells...)
+	return result.String()
+}
+
+func padRight(s string, width int) string {
+	if len(s) >= width {
+		return s[:width]
+	}
+	return s + strings.Repeat(" ", width-len(s))
 }
 
 func getStatusStyle(s types.ResourceStatus) lipgloss.Style {
-	base := lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+	base := lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Padding(0, 1)
 	switch s {
 	case types.StatusRunning:
 		return base.Background(runningBg)
