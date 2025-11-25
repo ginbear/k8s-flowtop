@@ -1,0 +1,15 @@
+# Binary
+flowtop
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Debug
+debug
+*.log
