@@ -65,7 +65,7 @@ var (
 )
 
 // Column widths
-var colWidths = []int{12, 15, 25, 12, 10, 5, 5, 5, 5, 5, 12, 13, 13, 20}
+var colWidths = []int{14, 15, 38, 12, 10, 5, 5, 5, 5, 5, 12, 13, 13, 20}
 var baseColHeaders = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MIN", "HRS", "DAY", "MON", "DOW", "TZ", "LAST", "NEXT", "MESSAGE"}
 
 // SortMode represents the current sort mode
@@ -179,6 +179,7 @@ type Model struct {
 	k8sClient        *k8s.Client
 	resources        []types.AsyncResource
 	filteredCache    []types.AsyncResource
+	treePrefixes     []string // tree prefix for each item in filteredCache
 	cursor           int
 	viewMode         types.ViewMode
 	sortMode         SortMode
@@ -342,17 +343,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) updateFiltered() {
 	filtered := m.filterResources()
 
-	// Sort based on sort mode
+	// Separate parents and children
+	var parents []types.AsyncResource
+	childrenMap := make(map[string][]types.AsyncResource) // key: "namespace/parentName"
+
+	for _, r := range filtered {
+		if r.ParentName != "" {
+			key := r.Namespace + "/" + r.ParentName
+			childrenMap[key] = append(childrenMap[key], r)
+		} else {
+			parents = append(parents, r)
+		}
+	}
+
+	// Sort parents based on sort mode
 	switch m.sortMode {
 	case SortByNextRun:
-		// Sort by next run time (earliest first), items without schedule go to bottom
 		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-		sort.Slice(filtered, func(i, j int) bool {
-			nextI := m.getNextRunTimeValue(filtered[i].Schedule, filtered[i].Timezone, parser)
-			nextJ := m.getNextRunTimeValue(filtered[j].Schedule, filtered[j].Timezone, parser)
-			// Items without schedule go to bottom
+		sort.Slice(parents, func(i, j int) bool {
+			nextI := m.getNextRunTimeValue(parents[i].Schedule, parents[i].Timezone, parser)
+			nextJ := m.getNextRunTimeValue(parents[j].Schedule, parents[j].Timezone, parser)
 			if nextI.IsZero() && nextJ.IsZero() {
-				return filtered[i].Name < filtered[j].Name
+				return parents[i].Name < parents[j].Name
 			}
 			if nextI.IsZero() {
 				return false
@@ -363,18 +375,67 @@ func (m *Model) updateFiltered() {
 			return nextI.Before(nextJ)
 		})
 	default:
-		// Sort by status priority then name
-		sort.Slice(filtered, func(i, j int) bool {
-			pi := statusPriority(filtered[i].Status)
-			pj := statusPriority(filtered[j].Status)
+		sort.Slice(parents, func(i, j int) bool {
+			pi := statusPriority(parents[i].Status)
+			pj := statusPriority(parents[j].Status)
 			if pi != pj {
 				return pi < pj
 			}
-			return filtered[i].Name < filtered[j].Name
+			return parents[i].Name < parents[j].Name
 		})
 	}
 
-	m.filteredCache = filtered
+	// Sort children by start time (newest first) or name
+	for key := range childrenMap {
+		children := childrenMap[key]
+		sort.Slice(children, func(i, j int) bool {
+			// Sort by start time descending (newest first)
+			if children[i].StartTime != nil && children[j].StartTime != nil {
+				return children[i].StartTime.After(*children[j].StartTime)
+			}
+			if children[i].StartTime != nil {
+				return true
+			}
+			if children[j].StartTime != nil {
+				return false
+			}
+			return children[i].Name > children[j].Name
+		})
+		childrenMap[key] = children
+	}
+
+	// Build final list with tree structure
+	var result []types.AsyncResource
+	var prefixes []string
+
+	for _, parent := range parents {
+		result = append(result, parent)
+		prefixes = append(prefixes, "")
+
+		key := parent.Namespace + "/" + parent.Name
+		children := childrenMap[key]
+		for i, child := range children {
+			result = append(result, child)
+			if i == len(children)-1 {
+				prefixes = append(prefixes, "┗ ")
+			} else {
+				prefixes = append(prefixes, "┣ ")
+			}
+		}
+		// Remove used children
+		delete(childrenMap, key)
+	}
+
+	// Add orphan children (whose parent is not in filtered list)
+	for _, children := range childrenMap {
+		for _, child := range children {
+			result = append(result, child)
+			prefixes = append(prefixes, "")
+		}
+	}
+
+	m.filteredCache = result
+	m.treePrefixes = prefixes
 
 	// Adjust cursor if needed
 	if m.cursor >= len(m.filteredCache) {
@@ -574,8 +635,12 @@ func (m Model) renderTable() string {
 	for i := startIdx; i < endIdx; i++ {
 		r := m.filteredCache[i]
 		isSelected := i == m.cursor
+		prefix := ""
+		if i < len(m.treePrefixes) {
+			prefix = m.treePrefixes[i]
+		}
 
-		row := m.renderRow(r, isSelected)
+		row := m.renderRow(r, isSelected, prefix)
 		b.WriteString(clipToWidth(row, width))
 		b.WriteString("\n")
 	}
@@ -609,7 +674,7 @@ func clipToWidth(s string, width int) string {
 	return lipgloss.NewStyle().MaxWidth(width).Render(s)
 }
 
-func (m Model) renderRow(r types.AsyncResource, isSelected bool) string {
+func (m Model) renderRow(r types.AsyncResource, isSelected bool, treePrefix string) string {
 	duration := "-"
 	if r.Duration > 0 {
 		duration = formatDuration(r.Duration)
@@ -641,8 +706,11 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool) string {
 		msg = "-"
 	}
 
+	// Build KIND column with tree prefix
+	kindStr := treePrefix + string(r.Kind)
+
 	cells := []string{
-		padRight(string(r.Kind), colWidths[0]),
+		padRight(kindStr, colWidths[0]),
 		padRight(truncate(r.Namespace, colWidths[1]-2), colWidths[1]),
 		padRight(truncate(r.Name, colWidths[2]-2), colWidths[2]),
 		padRight(formatStatusText(r.Status), colWidths[3]),
@@ -744,19 +812,21 @@ func (m Model) getNextRunTime(schedule, timezone string) string {
 
 // padCenter pads a string to center it within the given width
 func padCenter(s string, width int) string {
-	if len(s) >= width {
-		return s[:width]
+	w := lipgloss.Width(s)
+	if w >= width {
+		return s
 	}
-	leftPad := (width - len(s)) / 2
-	rightPad := width - len(s) - leftPad
+	leftPad := (width - w) / 2
+	rightPad := width - w - leftPad
 	return strings.Repeat(" ", leftPad) + s + strings.Repeat(" ", rightPad)
 }
 
 func padRight(s string, width int) string {
-	if len(s) >= width {
-		return s[:width]
+	w := lipgloss.Width(s)
+	if w >= width {
+		return s
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", width-w)
 }
 
 func getStatusStyle(s types.ResourceStatus) lipgloss.Style {

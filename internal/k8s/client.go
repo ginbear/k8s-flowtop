@@ -250,6 +250,15 @@ func jobToResource(job batchv1.Job) types.AsyncResource {
 		Status:    types.StatusUnknown,
 	}
 
+	// Extract parent from ownerReferences (for Jobs spawned by CronJob)
+	for _, ref := range job.OwnerReferences {
+		if ref.Kind == "CronJob" {
+			r.ParentKind = ref.Kind
+			r.ParentName = ref.Name
+			break
+		}
+	}
+
 	if job.Status.StartTime != nil {
 		t := job.Status.StartTime.Time
 		r.StartTime = &t
@@ -321,6 +330,16 @@ func workflowToResource(obj unstructured.Unstructured) types.AsyncResource {
 		Name:      obj.GetName(),
 		Namespace: obj.GetNamespace(),
 		Status:    types.StatusUnknown,
+	}
+
+	// Extract parent from ownerReferences (for Workflows spawned by CronWorkflow)
+	ownerRefs := obj.GetOwnerReferences()
+	for _, ref := range ownerRefs {
+		if ref.Kind == "CronWorkflow" {
+			r.ParentKind = ref.Kind
+			r.ParentName = ref.Name
+			break
+		}
 	}
 
 	status, _, _ := unstructured.NestedMap(obj.Object, "status")

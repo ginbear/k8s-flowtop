@@ -49,6 +49,10 @@ type AsyncResource struct {
 	LastRun    *time.Time
 	NextRun    *time.Time
 	QueueDepth int // for queue workers
+
+	// Parent relationship (for Workflow spawned by CronWorkflow)
+	ParentKind string
+	ParentName string
 }
 
 // ViewMode represents the current view mode
