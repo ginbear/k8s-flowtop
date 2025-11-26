@@ -292,6 +292,11 @@ func cronJobToResource(cj batchv1.CronJob) types.AsyncResource {
 		Status:    types.StatusRunning,
 	}
 
+	// Extract timezone if specified (Kubernetes 1.25+)
+	if cj.Spec.TimeZone != nil {
+		r.Timezone = *cj.Spec.TimeZone
+	}
+
 	if cj.Status.LastScheduleTime != nil {
 		t := cj.Status.LastScheduleTime.Time
 		r.LastRun = &t
@@ -373,6 +378,9 @@ func cronWorkflowToResource(obj unstructured.Unstructured) types.AsyncResource {
 	if spec != nil {
 		if schedule, ok := spec["schedule"].(string); ok {
 			r.Schedule = schedule
+		}
+		if timezone, ok := spec["timezone"].(string); ok {
+			r.Timezone = timezone
 		}
 	}
 

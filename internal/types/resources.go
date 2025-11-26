@@ -45,6 +45,7 @@ type AsyncResource struct {
 
 	// Additional info
 	Schedule   string // for CronJob/CronWorkflow
+	Timezone   string // timezone for schedule (e.g., "Asia/Tokyo")
 	LastRun    *time.Time
 	NextRun    *time.Time
 	QueueDepth int // for queue workers

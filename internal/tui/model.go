@@ -65,8 +65,8 @@ var (
 )
 
 // Column widths
-var colWidths = []int{12, 15, 25, 12, 10, 5, 5, 5, 5, 5, 13, 13, 20}
-var baseColHeaders = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MIN", "HRS", "DAY", "MON", "DOW", "LAST", "NEXT", "MESSAGE"}
+var colWidths = []int{12, 15, 25, 12, 10, 5, 5, 5, 5, 5, 12, 13, 13, 20}
+var baseColHeaders = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MIN", "HRS", "DAY", "MON", "DOW", "TZ", "LAST", "NEXT", "MESSAGE"}
 
 // SortMode represents the current sort mode
 type SortMode int
@@ -347,10 +347,9 @@ func (m *Model) updateFiltered() {
 	case SortByNextRun:
 		// Sort by next run time (earliest first), items without schedule go to bottom
 		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-		now := time.Now().UTC()
 		sort.Slice(filtered, func(i, j int) bool {
-			nextI := m.getNextRunTimeValue(filtered[i].Schedule, parser, now)
-			nextJ := m.getNextRunTimeValue(filtered[j].Schedule, parser, now)
+			nextI := m.getNextRunTimeValue(filtered[i].Schedule, filtered[i].Timezone, parser)
+			nextJ := m.getNextRunTimeValue(filtered[j].Schedule, filtered[j].Timezone, parser)
 			// Items without schedule go to bottom
 			if nextI.IsZero() && nextJ.IsZero() {
 				return filtered[i].Name < filtered[j].Name
@@ -387,7 +386,8 @@ func (m *Model) updateFiltered() {
 }
 
 // getNextRunTimeValue returns the next run time as time.Time for sorting
-func (m *Model) getNextRunTimeValue(schedule string, parser cron.Parser, now time.Time) time.Time {
+// If timezone is specified, schedule is interpreted in that timezone
+func (m *Model) getNextRunTimeValue(schedule, timezone string, parser cron.Parser) time.Time {
 	if schedule == "" {
 		return time.Time{}
 	}
@@ -395,6 +395,20 @@ func (m *Model) getNextRunTimeValue(schedule string, parser cron.Parser, now tim
 	if err != nil {
 		return time.Time{}
 	}
+
+	// Determine the timezone for schedule interpretation
+	var now time.Time
+	if timezone != "" {
+		loc, err := time.LoadLocation(timezone)
+		if err == nil {
+			now = time.Now().In(loc)
+		} else {
+			now = time.Now().UTC()
+		}
+	} else {
+		now = time.Now().UTC()
+	}
+
 	return sched.Next(now)
 }
 
@@ -579,9 +593,9 @@ func (m Model) renderHeader() string {
 	for i, h := range baseColHeaders {
 		header := h
 		// Add timezone to LAST and NEXT columns
-		if i == 10 {
+		if i == 11 {
 			header = fmt.Sprintf("LAST(%s)", tz)
-		} else if i == 11 {
+		} else if i == 12 {
 			header = fmt.Sprintf("NEXT(%s)", tz)
 		}
 		result.WriteString(headerStyle.Render(padRight(header, colWidths[i])))
@@ -606,11 +620,22 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool) string {
 
 	// Calculate last and next run time
 	lastRun := m.formatTime(r.LastRun)
-	nextRun := m.getNextRunTime(r.Schedule)
+	nextRun := m.getNextRunTime(r.Schedule, r.Timezone)
+
+	// Format timezone for display
+	tz := r.Timezone
+	if tz == "" {
+		tz = "-"
+	} else {
+		// Shorten common timezone names
+		tz = strings.TrimPrefix(tz, "Asia/")
+		tz = strings.TrimPrefix(tz, "America/")
+		tz = strings.TrimPrefix(tz, "Europe/")
+	}
 
 	msg := r.Message
-	if len(msg) > colWidths[12]-2 {
-		msg = msg[:colWidths[12]-5] + "..."
+	if len(msg) > colWidths[13]-2 {
+		msg = msg[:colWidths[13]-5] + "..."
 	}
 	if msg == "" {
 		msg = "-"
@@ -627,9 +652,10 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool) string {
 		padCenter(cronFields[2], colWidths[7]),  // DAY
 		padCenter(cronFields[3], colWidths[8]),  // MON
 		padCenter(cronFields[4], colWidths[9]),  // DOW
-		padRight(lastRun, colWidths[10]),        // LAST
-		padRight(nextRun, colWidths[11]),        // NEXT
-		padRight(msg, colWidths[12]),
+		padRight(tz, colWidths[10]),             // TZ
+		padRight(lastRun, colWidths[11]),        // LAST
+		padRight(nextRun, colWidths[12]),        // NEXT
+		padRight(msg, colWidths[13]),
 	}
 
 	var result strings.Builder
@@ -678,8 +704,9 @@ func (m Model) formatTime(t *time.Time) string {
 }
 
 // getNextRunTime calculates the next run time from a cron expression
-// Kubernetes CronJob uses UTC, so we calculate based on UTC time
-func (m Model) getNextRunTime(schedule string) string {
+// If timezone is specified (e.g., "Asia/Tokyo"), schedule is interpreted in that timezone
+// Otherwise, schedule is interpreted in UTC (Kubernetes default)
+func (m Model) getNextRunTime(schedule, timezone string) string {
 	if schedule == "" {
 		return "-"
 	}
@@ -690,10 +717,27 @@ func (m Model) getNextRunTime(schedule string) string {
 		return "-"
 	}
 
-	// Calculate next run based on UTC (Kubernetes CronJob default)
-	next := sched.Next(time.Now().UTC())
+	// Determine the timezone for schedule interpretation
+	var now time.Time
+	if timezone != "" {
+		loc, err := time.LoadLocation(timezone)
+		if err == nil {
+			now = time.Now().In(loc)
+		} else {
+			now = time.Now().UTC()
+		}
+	} else {
+		now = time.Now().UTC()
+	}
+
+	// Calculate next run in the schedule's timezone
+	next := sched.Next(now)
+
+	// Convert to display timezone
 	if m.useJST && m.jstLocation != nil {
 		next = next.In(m.jstLocation)
+	} else {
+		next = next.UTC()
 	}
 	return next.Format("01/02 15:04")
 }
