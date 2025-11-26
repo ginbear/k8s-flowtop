@@ -64,9 +64,18 @@ var (
 			Foreground(lipgloss.Color("240"))
 )
 
-// Column widths
-var colWidths = []int{14, 15, 38, 12, 10, 5, 5, 5, 5, 5, 12, 13, 13, 20}
-var baseColHeaders = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MIN", "HRS", "DAY", "MON", "DOW", "TZ", "LAST", "NEXT", "MESSAGE"}
+// Column definitions per view mode
+// All view: simple overview
+var colWidthsAll = []int{14, 15, 45, 12, 10, 30}
+var colHeadersAll = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MESSAGE"}
+
+// Jobs/Workflows view: schedule-focused
+var colWidthsJobs = []int{14, 15, 38, 12, 10, 5, 5, 5, 5, 5, 12, 13, 13, 20}
+var colHeadersJobs = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MIN", "HRS", "DAY", "MON", "DOW", "TZ", "LAST", "NEXT", "MESSAGE"}
+
+// Events view: event-focused
+var colWidthsEvents = []int{13, 15, 32, 10, 22, 40, 40}
+var colHeadersEvents = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "EVENT_SOURCE", "EVENT_NAME", "TRIGGER"}
 
 // SortMode represents the current sort mode
 type SortMode int
@@ -648,20 +657,35 @@ func (m Model) renderTable() string {
 	return b.String()
 }
 
+func (m Model) getColumnConfig() ([]int, []string) {
+	switch m.viewMode {
+	case types.ViewEvents:
+		return colWidthsEvents, colHeadersEvents
+	case types.ViewAll:
+		return colWidthsAll, colHeadersAll
+	default: // ViewJobs, ViewWorkflows
+		return colWidthsJobs, colHeadersJobs
+	}
+}
+
 func (m Model) renderHeader() string {
 	tz := "UTC"
 	if m.useJST {
 		tz = "JST"
 	}
 
+	colWidths, colHeaders := m.getColumnConfig()
+
 	var result strings.Builder
-	for i, h := range baseColHeaders {
+	for i, h := range colHeaders {
 		header := h
-		// Add timezone to LAST and NEXT columns
-		if i == 11 {
-			header = fmt.Sprintf("LAST(%s)", tz)
-		} else if i == 12 {
-			header = fmt.Sprintf("NEXT(%s)", tz)
+		// Add timezone to LAST and NEXT columns (Jobs/Workflows view)
+		if m.viewMode != types.ViewEvents && m.viewMode != types.ViewAll {
+			if header == "LAST" {
+				header = fmt.Sprintf("LAST(%s)", tz)
+			} else if header == "NEXT" {
+				header = fmt.Sprintf("NEXT(%s)", tz)
+			}
 		}
 		result.WriteString(headerStyle.Render(padRight(header, colWidths[i])))
 	}
@@ -675,62 +699,109 @@ func clipToWidth(s string, width int) string {
 }
 
 func (m Model) renderRow(r types.AsyncResource, isSelected bool, treePrefix string) string {
+	colWidths, _ := m.getColumnConfig()
+
 	duration := "-"
 	if r.Duration > 0 {
 		duration = formatDuration(r.Duration)
 	}
 
-	// Parse cron schedule into 5 fields (min, hrs, day, mon, dow)
-	cronFields := parseCronFields(r.Schedule)
-
-	// Calculate last and next run time
-	lastRun := m.formatTime(r.LastRun)
-	nextRun := m.getNextRunTime(r.Schedule, r.Timezone)
-
-	// Format timezone for display
-	tz := r.Timezone
-	if tz == "" {
-		tz = "-"
-	} else {
-		// Shorten common timezone names
-		tz = strings.TrimPrefix(tz, "Asia/")
-		tz = strings.TrimPrefix(tz, "America/")
-		tz = strings.TrimPrefix(tz, "Europe/")
-	}
-
-	msg := r.Message
-	if len(msg) > colWidths[13]-2 {
-		msg = msg[:colWidths[13]-5] + "..."
-	}
-	if msg == "" {
-		msg = "-"
-	}
-
 	// Build KIND column with tree prefix
 	kindStr := treePrefix + string(r.Kind)
 
-	cells := []string{
-		padRight(kindStr, colWidths[0]),
-		padRight(truncate(r.Namespace, colWidths[1]-2), colWidths[1]),
-		padRight(truncate(r.Name, colWidths[2]-2), colWidths[2]),
-		padRight(formatStatusText(r.Status), colWidths[3]),
-		padRight(duration, colWidths[4]),
-		padCenter(cronFields[0], colWidths[5]),  // MIN
-		padCenter(cronFields[1], colWidths[6]),  // HRS
-		padCenter(cronFields[2], colWidths[7]),  // DAY
-		padCenter(cronFields[3], colWidths[8]),  // MON
-		padCenter(cronFields[4], colWidths[9]),  // DOW
-		padRight(tz, colWidths[10]),             // TZ
-		padRight(lastRun, colWidths[11]),        // LAST
-		padRight(nextRun, colWidths[12]),        // NEXT
-		padRight(msg, colWidths[13]),
+	var cells []string
+	statusColIdx := 3 // Status column index for coloring
+
+	switch m.viewMode {
+	case types.ViewAll:
+		// All view: KIND, NAMESPACE, NAME, STATUS, DURATION, MESSAGE
+		msg := truncateMsg(r.Message, colWidths[5]-2)
+		cells = []string{
+			padRight(kindStr, colWidths[0]),
+			padRight(truncate(r.Namespace, colWidths[1]-2), colWidths[1]),
+			padRight(truncate(r.Name, colWidths[2]-2), colWidths[2]),
+			padRight(formatStatusText(r.Status), colWidths[3]),
+			padRight(duration, colWidths[4]),
+			padRight(msg, colWidths[5]),
+		}
+
+	case types.ViewEvents:
+		// Events view: KIND, NAMESPACE, NAME, STATUS, EVENT_SOURCE, EVENT_NAME, TRIGGER
+		eventSource := r.EventSourceName
+		if eventSource == "" {
+			eventSource = "-"
+		}
+		eventName := "-"
+		if len(r.EventNames) > 0 {
+			eventName = r.EventNames[0]
+			if len(r.EventNames) > 1 {
+				eventName += fmt.Sprintf(" (+%d)", len(r.EventNames)-1)
+			}
+		}
+		trigger := "-"
+		if len(r.TriggerNames) > 0 {
+			trigger = r.TriggerNames[0]
+			if len(r.TriggerNames) > 1 {
+				trigger += fmt.Sprintf(" (+%d)", len(r.TriggerNames)-1)
+			}
+		}
+		// For EventSource, show event type instead
+		if r.Kind == types.KindEventSource {
+			eventName = r.EventType
+			if eventName == "" {
+				eventName = "-"
+			}
+			trigger = "-"
+		}
+		cells = []string{
+			padRight(kindStr, colWidths[0]),
+			padRight(truncate(r.Namespace, colWidths[1]-2), colWidths[1]),
+			padRight(truncate(r.Name, colWidths[2]-2), colWidths[2]),
+			padRight(formatStatusText(r.Status), colWidths[3]),
+			padRight(truncate(eventSource, colWidths[4]-2), colWidths[4]),
+			padRight(truncate(eventName, colWidths[5]-2), colWidths[5]),
+			padRight(truncate(trigger, colWidths[6]-2), colWidths[6]),
+		}
+
+	default: // ViewJobs, ViewWorkflows
+		// Jobs/Workflows view: full schedule columns
+		cronFields := parseCronFields(r.Schedule)
+		lastRun := m.formatTime(r.LastRun)
+		nextRun := m.getNextRunTime(r.Schedule, r.Timezone)
+
+		tz := r.Timezone
+		if tz == "" {
+			tz = "-"
+		} else {
+			tz = strings.TrimPrefix(tz, "Asia/")
+			tz = strings.TrimPrefix(tz, "America/")
+			tz = strings.TrimPrefix(tz, "Europe/")
+		}
+
+		msg := truncateMsg(r.Message, colWidths[13]-2)
+		cells = []string{
+			padRight(kindStr, colWidths[0]),
+			padRight(truncate(r.Namespace, colWidths[1]-2), colWidths[1]),
+			padRight(truncate(r.Name, colWidths[2]-2), colWidths[2]),
+			padRight(formatStatusText(r.Status), colWidths[3]),
+			padRight(duration, colWidths[4]),
+			padCenter(cronFields[0], colWidths[5]),  // MIN
+			padCenter(cronFields[1], colWidths[6]),  // HRS
+			padCenter(cronFields[2], colWidths[7]),  // DAY
+			padCenter(cronFields[3], colWidths[8]),  // MON
+			padCenter(cronFields[4], colWidths[9]),  // DOW
+			padRight(tz, colWidths[10]),             // TZ
+			padRight(lastRun, colWidths[11]),        // LAST
+			padRight(nextRun, colWidths[12]),        // NEXT
+			padRight(msg, colWidths[13]),
+		}
 	}
 
 	var result strings.Builder
 	for i, cell := range cells {
 		if isSelected {
 			result.WriteString(selectedRowStyle.Render(cell))
-		} else if i == 3 {
+		} else if i == statusColIdx {
 			// Status column - apply background color
 			result.WriteString(getStatusStyle(r.Status).Render(cell))
 		} else {
@@ -739,6 +810,16 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool, treePrefix stri
 	}
 
 	return result.String()
+}
+
+func truncateMsg(msg string, maxLen int) string {
+	if msg == "" {
+		return "-"
+	}
+	if len(msg) > maxLen {
+		return msg[:maxLen-3] + "..."
+	}
+	return msg
 }
 
 // parseCronFields splits a cron expression into 5 fields

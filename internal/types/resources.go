@@ -63,6 +63,12 @@ type AsyncResource struct {
 
 	// DAG nodes (for Workflow)
 	DAGNodes []DAGNode
+
+	// Event info (for Sensor/EventSource)
+	EventSourceName string   // EventSource name that Sensor listens to
+	EventNames      []string // Event names that Sensor listens to
+	EventType       string   // Type of EventSource (webhook, sqs, kafka, etc.)
+	TriggerNames    []string // Trigger names in Sensor
 }
 
 // ViewMode represents the current view mode

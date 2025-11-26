@@ -445,6 +445,45 @@ func sensorToResource(obj unstructured.Unstructured) types.AsyncResource {
 		Status:    types.StatusUnknown,
 	}
 
+	// Extract dependencies (event sources and event names)
+	spec, _, _ := unstructured.NestedMap(obj.Object, "spec")
+	if spec != nil {
+		if deps, ok := spec["dependencies"].([]interface{}); ok {
+			eventSourceSet := make(map[string]bool)
+			for _, d := range deps {
+				if dep, ok := d.(map[string]interface{}); ok {
+					if esName, ok := dep["eventSourceName"].(string); ok {
+						eventSourceSet[esName] = true
+					}
+					if eventName, ok := dep["eventName"].(string); ok {
+						r.EventNames = append(r.EventNames, eventName)
+					}
+				}
+			}
+			// Collect unique event source names
+			for esName := range eventSourceSet {
+				if r.EventSourceName == "" {
+					r.EventSourceName = esName
+				} else {
+					r.EventSourceName += "," + esName
+				}
+			}
+		}
+
+		// Extract trigger names
+		if triggers, ok := spec["triggers"].([]interface{}); ok {
+			for _, t := range triggers {
+				if trigger, ok := t.(map[string]interface{}); ok {
+					if tmpl, ok := trigger["template"].(map[string]interface{}); ok {
+						if name, ok := tmpl["name"].(string); ok {
+							r.TriggerNames = append(r.TriggerNames, name)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	status, _, _ := unstructured.NestedMap(obj.Object, "status")
 	if status != nil {
 		conditions, _, _ := unstructured.NestedSlice(status, "conditions")
@@ -473,6 +512,25 @@ func eventSourceToResource(obj unstructured.Unstructured) types.AsyncResource {
 		Name:      obj.GetName(),
 		Namespace: obj.GetNamespace(),
 		Status:    types.StatusUnknown,
+	}
+
+	// Extract event type from spec (webhook, sqs, kafka, etc.)
+	spec, _, _ := unstructured.NestedMap(obj.Object, "spec")
+	if spec != nil {
+		// EventSource spec has keys like "webhook", "sqs", "kafka", etc.
+		eventTypes := []string{}
+		knownTypes := []string{"webhook", "sqs", "kafka", "amqp", "pubsub", "sns", "slack", "github", "gitlab", "bitbucket", "calendar", "file", "resource", "redis", "nats", "emitter", "nsq", "pulsar", "generic", "hdfs", "sftp", "stripe", "azureEventsHub", "azureQueueStorage"}
+		for _, t := range knownTypes {
+			if _, exists := spec[t]; exists {
+				eventTypes = append(eventTypes, t)
+			}
+		}
+		if len(eventTypes) > 0 {
+			r.EventType = eventTypes[0]
+			if len(eventTypes) > 1 {
+				r.EventType += ",..."
+			}
+		}
 	}
 
 	status, _, _ := unstructured.NestedMap(obj.Object, "status")
