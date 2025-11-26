@@ -51,8 +51,9 @@ type AsyncResource struct {
 	Throughput   float64 // per minute
 
 	// Additional info
-	Schedule   string // for CronJob/CronWorkflow
-	Timezone   string // timezone for schedule (e.g., "Asia/Tokyo")
+	ServiceAccount string // service account name
+	Schedule       string // for CronJob/CronWorkflow
+	Timezone       string // timezone for schedule (e.g., "Asia/Tokyo")
 	LastRun    *time.Time
 	NextRun    *time.Time
 	QueueDepth int // for queue workers

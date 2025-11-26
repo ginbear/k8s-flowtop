@@ -244,10 +244,11 @@ func (c *Client) ListAll(ctx context.Context) ([]types.AsyncResource, error) {
 
 func jobToResource(job batchv1.Job) types.AsyncResource {
 	r := types.AsyncResource{
-		Kind:      types.KindJob,
-		Name:      job.Name,
-		Namespace: job.Namespace,
-		Status:    types.StatusUnknown,
+		Kind:           types.KindJob,
+		Name:           job.Name,
+		Namespace:      job.Namespace,
+		Status:         types.StatusUnknown,
+		ServiceAccount: job.Spec.Template.Spec.ServiceAccountName,
 	}
 
 	// Extract parent from ownerReferences (for Jobs spawned by CronJob)
@@ -294,11 +295,12 @@ func jobToResource(job batchv1.Job) types.AsyncResource {
 
 func cronJobToResource(cj batchv1.CronJob) types.AsyncResource {
 	r := types.AsyncResource{
-		Kind:      types.KindCronJob,
-		Name:      cj.Name,
-		Namespace: cj.Namespace,
-		Schedule:  cj.Spec.Schedule,
-		Status:    types.StatusRunning,
+		Kind:           types.KindCronJob,
+		Name:           cj.Name,
+		Namespace:      cj.Namespace,
+		Schedule:       cj.Spec.Schedule,
+		Status:         types.StatusRunning,
+		ServiceAccount: cj.Spec.JobTemplate.Spec.Template.Spec.ServiceAccountName,
 	}
 
 	// Extract timezone if specified (Kubernetes 1.25+)
@@ -330,6 +332,11 @@ func workflowToResource(obj unstructured.Unstructured) types.AsyncResource {
 		Name:      obj.GetName(),
 		Namespace: obj.GetNamespace(),
 		Status:    types.StatusUnknown,
+	}
+
+	// Extract service account from spec
+	if sa, ok, _ := unstructured.NestedString(obj.Object, "spec", "serviceAccountName"); ok {
+		r.ServiceAccount = sa
 	}
 
 	// Extract parent from ownerReferences (for Workflows spawned by CronWorkflow)
@@ -423,6 +430,12 @@ func cronWorkflowToResource(obj unstructured.Unstructured) types.AsyncResource {
 		if timezone, ok := spec["timezone"].(string); ok {
 			r.Timezone = timezone
 		}
+		// Extract service account from workflowSpec
+		if wfSpec, ok := spec["workflowSpec"].(map[string]interface{}); ok {
+			if sa, ok := wfSpec["serviceAccountName"].(string); ok {
+				r.ServiceAccount = sa
+			}
+		}
 	}
 
 	status, _, _ := unstructured.NestedMap(obj.Object, "status")
@@ -443,6 +456,11 @@ func sensorToResource(obj unstructured.Unstructured) types.AsyncResource {
 		Name:      obj.GetName(),
 		Namespace: obj.GetNamespace(),
 		Status:    types.StatusUnknown,
+	}
+
+	// Extract service account from spec.template
+	if sa, ok, _ := unstructured.NestedString(obj.Object, "spec", "template", "serviceAccountName"); ok {
+		r.ServiceAccount = sa
 	}
 
 	// Extract dependencies (event sources and event names)
@@ -512,6 +530,11 @@ func eventSourceToResource(obj unstructured.Unstructured) types.AsyncResource {
 		Name:      obj.GetName(),
 		Namespace: obj.GetNamespace(),
 		Status:    types.StatusUnknown,
+	}
+
+	// Extract service account from spec.template
+	if sa, ok, _ := unstructured.NestedString(obj.Object, "spec", "template", "serviceAccountName"); ok {
+		r.ServiceAccount = sa
 	}
 
 	// Extract event type from spec (webhook, sqs, kafka, etc.)

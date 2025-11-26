@@ -66,16 +66,16 @@ var (
 
 // Column definitions per view mode
 // All view: simple overview
-var colWidthsAll = []int{14, 15, 45, 12, 10, 30}
-var colHeadersAll = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MESSAGE"}
+var colWidthsAll = []int{14, 15, 45, 12, 20, 10, 30}
+var colHeadersAll = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "SA", "DURATION", "MESSAGE"}
 
 // Jobs/Workflows view: schedule-focused
-var colWidthsJobs = []int{14, 15, 38, 12, 10, 5, 5, 5, 5, 5, 12, 13, 13, 20}
-var colHeadersJobs = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "DURATION", "MIN", "HRS", "DAY", "MON", "DOW", "TZ", "LAST", "NEXT", "MESSAGE"}
+var colWidthsJobs = []int{14, 15, 38, 12, 20, 10, 5, 5, 5, 5, 5, 12, 13, 13, 20}
+var colHeadersJobs = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "SA", "DURATION", "MIN", "HRS", "DAY", "MON", "DOW", "TZ", "LAST", "NEXT", "MESSAGE"}
 
 // Events view: event-focused
-var colWidthsEvents = []int{13, 15, 32, 10, 22, 40, 40}
-var colHeadersEvents = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "EVENT_SOURCE", "EVENT_NAME", "TRIGGER"}
+var colWidthsEvents = []int{13, 15, 28, 10, 20, 20, 35, 35}
+var colHeadersEvents = []string{"KIND", "NAMESPACE", "NAME", "STATUS", "SA", "EVENT_SOURCE", "EVENT_NAME", "TRIGGER"}
 
 // SortMode represents the current sort mode
 type SortMode int
@@ -712,21 +712,28 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool, treePrefix stri
 	var cells []string
 	statusColIdx := 3 // Status column index for coloring
 
+	// Format service account
+	sa := r.ServiceAccount
+	if sa == "" {
+		sa = "-"
+	}
+
 	switch m.viewMode {
 	case types.ViewAll:
-		// All view: KIND, NAMESPACE, NAME, STATUS, DURATION, MESSAGE
-		msg := truncateMsg(r.Message, colWidths[5]-2)
+		// All view: KIND, NAMESPACE, NAME, STATUS, SA, DURATION, MESSAGE
+		msg := truncateMsg(r.Message, colWidths[6]-2)
 		cells = []string{
 			padRight(kindStr, colWidths[0]),
 			padRight(truncate(r.Namespace, colWidths[1]-2), colWidths[1]),
 			padRight(truncate(r.Name, colWidths[2]-2), colWidths[2]),
 			padRight(formatStatusText(r.Status), colWidths[3]),
-			padRight(duration, colWidths[4]),
-			padRight(msg, colWidths[5]),
+			padRight(truncate(sa, colWidths[4]-2), colWidths[4]),
+			padRight(duration, colWidths[5]),
+			padRight(msg, colWidths[6]),
 		}
 
 	case types.ViewEvents:
-		// Events view: KIND, NAMESPACE, NAME, STATUS, EVENT_SOURCE, EVENT_NAME, TRIGGER
+		// Events view: KIND, NAMESPACE, NAME, STATUS, SA, EVENT_SOURCE, EVENT_NAME, TRIGGER
 		eventSource := r.EventSourceName
 		if eventSource == "" {
 			eventSource = "-"
@@ -758,9 +765,10 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool, treePrefix stri
 			padRight(truncate(r.Namespace, colWidths[1]-2), colWidths[1]),
 			padRight(truncate(r.Name, colWidths[2]-2), colWidths[2]),
 			padRight(formatStatusText(r.Status), colWidths[3]),
-			padRight(truncate(eventSource, colWidths[4]-2), colWidths[4]),
-			padRight(truncate(eventName, colWidths[5]-2), colWidths[5]),
-			padRight(truncate(trigger, colWidths[6]-2), colWidths[6]),
+			padRight(truncate(sa, colWidths[4]-2), colWidths[4]),
+			padRight(truncate(eventSource, colWidths[5]-2), colWidths[5]),
+			padRight(truncate(eventName, colWidths[6]-2), colWidths[6]),
+			padRight(truncate(trigger, colWidths[7]-2), colWidths[7]),
 		}
 
 	default: // ViewJobs, ViewWorkflows
@@ -778,22 +786,23 @@ func (m Model) renderRow(r types.AsyncResource, isSelected bool, treePrefix stri
 			tz = strings.TrimPrefix(tz, "Europe/")
 		}
 
-		msg := truncateMsg(r.Message, colWidths[13]-2)
+		msg := truncateMsg(r.Message, colWidths[14]-2)
 		cells = []string{
 			padRight(kindStr, colWidths[0]),
 			padRight(truncate(r.Namespace, colWidths[1]-2), colWidths[1]),
 			padRight(truncate(r.Name, colWidths[2]-2), colWidths[2]),
 			padRight(formatStatusText(r.Status), colWidths[3]),
-			padRight(duration, colWidths[4]),
-			padCenter(cronFields[0], colWidths[5]),  // MIN
-			padCenter(cronFields[1], colWidths[6]),  // HRS
-			padCenter(cronFields[2], colWidths[7]),  // DAY
-			padCenter(cronFields[3], colWidths[8]),  // MON
-			padCenter(cronFields[4], colWidths[9]),  // DOW
-			padRight(tz, colWidths[10]),             // TZ
-			padRight(lastRun, colWidths[11]),        // LAST
-			padRight(nextRun, colWidths[12]),        // NEXT
-			padRight(msg, colWidths[13]),
+			padRight(truncate(sa, colWidths[4]-2), colWidths[4]), // SA
+			padRight(duration, colWidths[5]),
+			padCenter(cronFields[0], colWidths[6]),  // MIN
+			padCenter(cronFields[1], colWidths[7]),  // HRS
+			padCenter(cronFields[2], colWidths[8]),  // DAY
+			padCenter(cronFields[3], colWidths[9]),  // MON
+			padCenter(cronFields[4], colWidths[10]), // DOW
+			padRight(tz, colWidths[11]),             // TZ
+			padRight(lastRun, colWidths[12]),        // LAST
+			padRight(nextRun, colWidths[13]),        // NEXT
+			padRight(msg, colWidths[14]),
 		}
 	}
 
