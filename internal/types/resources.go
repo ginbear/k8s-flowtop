@@ -25,6 +25,13 @@ const (
 	StatusUnknown   ResourceStatus = "Unknown"
 )
 
+// DAGNode represents a node in a workflow DAG
+type DAGNode struct {
+	Name   string
+	Type   string // DAG, Pod, Retry, etc.
+	Phase  string // Running, Succeeded, Failed, Pending, Error
+}
+
 // AsyncResource represents a unified view of async processing resources
 type AsyncResource struct {
 	Kind       ResourceKind
@@ -53,6 +60,9 @@ type AsyncResource struct {
 	// Parent relationship (for Workflow spawned by CronWorkflow)
 	ParentKind string
 	ParentName string
+
+	// DAG nodes (for Workflow)
+	DAGNodes []DAGNode
 }
 
 // ViewMode represents the current view mode

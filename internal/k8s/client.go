@@ -380,6 +380,28 @@ func workflowToResource(obj unstructured.Unstructured) types.AsyncResource {
 				r.Duration = time.Since(*r.StartTime)
 			}
 		}
+
+		// Extract DAG nodes
+		if nodes, ok := status["nodes"].(map[string]interface{}); ok {
+			for _, nodeData := range nodes {
+				if node, ok := nodeData.(map[string]interface{}); ok {
+					dagNode := types.DAGNode{}
+					if name, ok := node["displayName"].(string); ok {
+						dagNode.Name = name
+					}
+					if nodeType, ok := node["type"].(string); ok {
+						dagNode.Type = nodeType
+					}
+					if phase, ok := node["phase"].(string); ok {
+						dagNode.Phase = phase
+					}
+					// Only include meaningful nodes (skip empty names)
+					if dagNode.Name != "" {
+						r.DAGNodes = append(r.DAGNodes, dagNode)
+					}
+				}
+			}
+		}
 	}
 
 	return r

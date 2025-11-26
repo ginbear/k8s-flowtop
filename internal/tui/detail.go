@@ -13,7 +13,7 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("99")).
 			Padding(1, 2).
-			Width(60)
+			Width(100)
 
 	detailTitleStyle = lipgloss.NewStyle().
 				Bold(true).
@@ -88,6 +88,51 @@ func RenderDetail(r types.AsyncResource, width, height int) string {
 		b.WriteString(wordWrap(r.Message, 50))
 	}
 
+	// DAG Nodes (for Workflow)
+	if len(r.DAGNodes) > 0 {
+		b.WriteString("\n")
+		b.WriteString(detailTitleStyle.Render("🔄 DAG Progress"))
+		b.WriteString("\n")
+
+		// Count by phase
+		counts := make(map[string]int)
+		for _, node := range r.DAGNodes {
+			counts[node.Phase]++
+		}
+
+		// Show summary
+		total := len(r.DAGNodes)
+		succeeded := counts["Succeeded"]
+		running := counts["Running"]
+		failed := counts["Failed"] + counts["Error"]
+		pending := counts["Pending"] + counts["Omitted"]
+
+		summaryStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+		b.WriteString(summaryStyle.Render(fmt.Sprintf("Total: %d  ", total)))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("34")).Render(fmt.Sprintf("✓%d  ", succeeded)))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Render(fmt.Sprintf("●%d  ", running)))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(fmt.Sprintf("✗%d  ", failed)))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(fmt.Sprintf("○%d", pending)))
+		b.WriteString("\n\n")
+
+		// Sort nodes: Running first, then Failed, then others
+		sortedNodes := sortDAGNodes(r.DAGNodes)
+
+		// Show individual nodes (limit to avoid overflow)
+		maxNodes := 20
+		shown := 0
+		for _, node := range sortedNodes {
+			if shown >= maxNodes {
+				remaining := len(sortedNodes) - maxNodes
+				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(
+					fmt.Sprintf("... and %d more nodes (✓%d)\n", remaining, counts["Succeeded"]-countShownSucceeded(sortedNodes[:maxNodes]))))
+				break
+			}
+			b.WriteString(formatDAGNode(node))
+			shown++
+		}
+	}
+
 	// Footer
 	b.WriteString("\n\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Press ESC or Enter to close"))
@@ -137,4 +182,80 @@ func wordWrap(text string, width int) string {
 	}
 
 	return result.String()
+}
+
+func formatDAGNode(node types.DAGNode) string {
+	var icon string
+	var style lipgloss.Style
+
+	switch node.Phase {
+	case "Succeeded":
+		icon = "✓"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("34"))
+	case "Running":
+		icon = "●"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
+	case "Failed", "Error":
+		icon = "✗"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	case "Pending":
+		icon = "○"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	case "Omitted":
+		icon = "⊘"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	default:
+		icon = "?"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	}
+
+	name := node.Name
+	if len(name) > 70 {
+		name = name[:67] + "..."
+	}
+
+	return fmt.Sprintf("%s %s\n", style.Render(icon), name)
+}
+
+// sortDAGNodes sorts nodes: Running first, then Failed/Error, then Pending, then Succeeded
+func sortDAGNodes(nodes []types.DAGNode) []types.DAGNode {
+	sorted := make([]types.DAGNode, len(nodes))
+	copy(sorted, nodes)
+
+	priority := func(phase string) int {
+		switch phase {
+		case "Running":
+			return 0
+		case "Failed", "Error":
+			return 1
+		case "Pending":
+			return 2
+		case "Omitted":
+			return 3
+		case "Succeeded":
+			return 4
+		default:
+			return 5
+		}
+	}
+
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if priority(sorted[i].Phase) > priority(sorted[j].Phase) {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+
+	return sorted
+}
+
+func countShownSucceeded(nodes []types.DAGNode) int {
+	count := 0
+	for _, n := range nodes {
+		if n.Phase == "Succeeded" {
+			count++
+		}
+	}
+	return count
 }
